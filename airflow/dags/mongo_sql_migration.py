@@ -5,7 +5,7 @@ from airflow.providers.mongo.hooks.mongo import MongoHook
 from datetime import datetime as dt, timedelta
 import logging
 import json
-
+from pathlib import Path
 default_args = {
     "owner": "Alex",
     "depends_on_past": False,
@@ -65,7 +65,22 @@ with DAG(
         conn.close()
         log.info("Loaded into %s", table)
         return f"Loaded into {table}"
+    
+    @task
+    def ods_transform(file_sql: str):
+        postgres_conn = PostgresHook(conn_id = "postgres_default")
+ 
+        sql_path = Path(__file__).parent/ "sql_scripts"/ file_sql
 
+        with open(sql_path, "r") as f:
+          sql = f.read()
+        postgres_conn.run(
+            sql,
+            autocommit=True
+        )
+        log.info("Loaded from %s", file_sql)
+        return f"Loaded from {file_sql}"
+    
     load_user_sessions = transfer_data.override(task_id="load_user_sessions")(
         "UserSessions",
         "staging.user_sessions_raw"
@@ -90,3 +105,18 @@ with DAG(
         "ModerationQueue",
         "staging.moderation_queue_raw"
     )
+
+    to_ods_moderation_queue = ods_transform.override(task_id="to_ods_moderation_queue")(
+        "moderation_queue.sql"
+    )
+
+    to_ods_event_logs = ods_transform.override(task_id="to_ods_event_logs")(
+        "event_logs.sql"
+    )
+
+    [load_user_sessions, 
+     load_event_logs, 
+     load_support_tickets, 
+     load_user_recommendations,
+     load_moderation_queue 
+    ] >> to_ods_moderation_queue >> to_ods_event_logs  
